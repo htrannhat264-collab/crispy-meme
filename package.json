@@ -1,0 +1,30 @@
+{
+  "name": "sao789-api",
+  "version": "1.0.0",
+  "description": "API lấy dữ liệu Tài Xỉu và MD5 từ sao789 qua WebSocket",
+  "main": "sao789.js",
+  "scripts": {
+    "start": "node sao789.js",
+    "dev": "nodemon sao789.js"
+  },
+  "keywords": [
+    "taixiu",
+    "md5",
+    "websocket",
+    "sao789",
+    "api"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0",
+    "express": "^4.21.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
