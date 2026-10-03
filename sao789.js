@@ -11,32 +11,38 @@ class GameWebSocketClient {
         this.reconnectDelay = 5000;
         this.isAuthenticated = false;
         this.sessionId = null;
-        this.latestTxData = null;   // Dữ liệu bàn tài xỉu thường (cmd 1005)
-        this.latestMd5Data = null;  // Dữ liệu bàn MD5 (cmd 1105)
+        this.latestTxData = null;
+        this.latestMd5Data = null;
         this.lastUpdateTime = {
             tx: null,
             md5: null
         };
+        this.refreshInterval = null;
     }
 
     connect() {
         console.log('🔗 Connecting to WebSocket server...');
-        
-        this.ws = new WebSocket(this.url, {
-            headers: {
-                'Host': 'apisao.net',
-                'Origin': 'https://play.sao789a.me',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-                'Pragma': 'no-cache',
-                'Cache-Control': 'no-cache',
-                'Accept-Encoding': 'gzip, deflate, br, zstd',
-                'Accept-Language': 'vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5',
-                'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits',
-                'Sec-WebSocket-Version': '13'
-            }
-        });
 
-        this.setupEventHandlers();
+        try {
+            this.ws = new WebSocket(this.url, {
+                headers: {
+                    'Host': 'apisao.net',
+                    'Origin': 'https://play.sao789a.me',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+                    'Pragma': 'no-cache',
+                    'Cache-Control': 'no-cache',
+                    'Accept-Language': 'vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5',
+                    'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits',
+                    'Sec-WebSocket-Version': '13'
+                },
+                handshakeTimeout: 15000
+            });
+
+            this.setupEventHandlers();
+        } catch (err) {
+            console.error('❌ Failed to create WebSocket:', err.message);
+            this.handleReconnect();
+        }
     }
 
     setupEventHandlers() {
@@ -68,7 +74,7 @@ class GameWebSocketClient {
 
     sendAuthentication() {
         console.log('🔐 Sending authentication...');
-        
+
         const authMessage = [
             1,
             "MiniGame",
@@ -96,49 +102,13 @@ class GameWebSocketClient {
 
     sendPluginMessages() {
         console.log('🚀 Sending plugin initialization messages...');
-        
+
         const pluginMessages = [
-            [
-                6,
-                "MiniGame",
-                "taixiuPlugin",
-                {
-                    "cmd": 1005
-                }
-            ],
-            [
-                6,
-                "MiniGame",
-                "taixiuMd5Plugin",
-                {
-                    "cmd": 1105
-                }
-            ],
-            [
-                6,
-                "MiniGame",
-                "taixiuLiveRoomPlugin",
-                {
-                    "cmd": 1305,
-                    "rid": 0
-                }
-            ],
-            [
-                6,
-                "MiniGame",
-                "taixiuMd5v2Plugin",
-                {
-                    "cmd": 1405
-                }
-            ],
-            [
-                6,
-                "MiniGame",
-                "lobbyPlugin",
-                {
-                    "cmd": 10001
-                }
-            ]
+            [6, "MiniGame", "taixiuPlugin", { "cmd": 1005 }],
+            [6, "MiniGame", "taixiuMd5Plugin", { "cmd": 1105 }],
+            [6, "MiniGame", "taixiuLiveRoomPlugin", { "cmd": 1305, "rid": 0 }],
+            [6, "MiniGame", "taixiuMd5v2Plugin", { "cmd": 1405 }],
+            [6, "MiniGame", "lobbyPlugin", { "cmd": 10001 }]
         ];
 
         pluginMessages.forEach((message, index) => {
@@ -148,8 +118,8 @@ class GameWebSocketClient {
             }, index * 1000);
         });
 
-        // Thiết lập interval để refresh dữ liệu mỗi 30 giây
-        setInterval(() => {
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
+        this.refreshInterval = setInterval(() => {
             this.refreshGameData();
         }, 30000);
     }
@@ -157,35 +127,16 @@ class GameWebSocketClient {
     refreshGameData() {
         if (this.isAuthenticated && this.ws && this.ws.readyState === WebSocket.OPEN) {
             console.log('🔄 Refreshing game data...');
-            
-            // Gửi refresh cả 2 bàn
-            const refreshTx = [
-                6,
-                "MiniGame",
-                "taixiuPlugin",
-                {
-                    "cmd": 1005
-                }
-            ];
-            
-            const refreshMd5 = [
-                6,
-                "MiniGame",
-                "taixiuMd5Plugin",
-                {
-                    "cmd": 1105
-                }
-            ];
-            
-            this.sendRaw(refreshTx);
+
+            this.sendRaw([6, "MiniGame", "taixiuPlugin", { "cmd": 1005 }]);
             setTimeout(() => {
-                this.sendRaw(refreshMd5);
+                this.sendRaw([6, "MiniGame", "taixiuMd5Plugin", { "cmd": 1105 }]);
             }, 1000);
         }
     }
 
     sendRaw(data) {
-        if (this.ws.readyState === WebSocket.OPEN) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             const jsonString = JSON.stringify(data);
             this.ws.send(jsonString);
             console.log('📤 Sent raw:', jsonString);
@@ -199,89 +150,60 @@ class GameWebSocketClient {
     handleMessage(data) {
         try {
             const parsed = JSON.parse(data);
-            
-            // XỬ LÝ CMD 1005 - BÀN TÀI XỈU THƯỜNG
+
             if (parsed[0] === 5 && parsed[1] && parsed[1].cmd === 1005) {
                 console.log('🎯 Nhận được dữ liệu cmd 1005 (Bàn TX)');
-                
                 const gameData = parsed[1];
-                
                 if (gameData.htr && gameData.htr.length > 0) {
-                    // Tìm phiên gần nhất
                     const latestSession = gameData.htr.reduce((prev, current) => {
                         return (current.sid > prev.sid) ? current : prev;
                     });
-                    
                     console.log(`🎲 Bàn TX - Phiên gần nhất: ${latestSession.sid} (${latestSession.d1},${latestSession.d2},${latestSession.d3})`);
-                    
-                    // Lưu dữ liệu
                     this.latestTxData = gameData;
                     this.lastUpdateTime.tx = new Date();
-                    console.log('💾 Đã cập nhật dữ liệu bàn TX');
                 }
             }
-            
-            // XỬ LÝ CMD 1105 - BÀN MD5
             else if (parsed[0] === 5 && parsed[1] && parsed[1].cmd === 1105) {
                 console.log('🎯 Nhận được dữ liệu cmd 1105 (Bàn MD5)');
-                
                 const gameData = parsed[1];
-                
                 if (gameData.htr && gameData.htr.length > 0) {
-                    // Tìm phiên gần nhất
                     const latestSession = gameData.htr.reduce((prev, current) => {
                         return (current.sid > prev.sid) ? current : prev;
                     });
-                    
                     console.log(`🎲 Bàn MD5 - Phiên gần nhất: ${latestSession.sid} (${latestSession.d1},${latestSession.d2},${latestSession.d3})`);
-                    
-                    // Lưu dữ liệu
                     this.latestMd5Data = gameData;
                     this.lastUpdateTime.md5 = new Date();
-                    console.log('💾 Đã cập nhật dữ liệu bàn MD5');
                 }
             }
-            
-            // Xử lý response authentication (type 5 nhưng không có cmd)
             else if (parsed[0] === 5 && parsed[1] && parsed[1].u) {
                 console.log('🔑 Authentication successful!');
-                
                 const userData = parsed[1];
                 console.log(`✅ User: ${userData.u}`);
                 this.isAuthenticated = true;
-                
-                // Sau khi xác thực thành công, đợi 2 giây rồi gửi plugin messages
+
                 setTimeout(() => {
                     console.log('🔄 Starting to send plugin messages...');
                     this.sendPluginMessages();
                 }, 2000);
             }
-            
-            // Xử lý response type 1 - Session initialization
             else if (parsed[0] === 1 && parsed[4] === "MiniGame") {
                 console.log('✅ Session initialized');
                 this.sessionId = parsed[3];
                 console.log(`📋 Session ID: ${this.sessionId}`);
             }
-            
-            // Xử lý response type 7 - Plugin response
             else if (parsed[0] === 7) {
-                const pluginName = parsed[2];
-                console.log(`🔄 Plugin ${pluginName} response received`);
+                console.log(`🔄 Plugin ${parsed[2]} response received`);
             }
-            
-            // Xử lý heartbeat/ping response
             else if (parsed[0] === 0) {
                 console.log('❤️  Heartbeat received');
             }
-            
+
         } catch (e) {
             console.log('📥 Raw message:', data.toString());
             console.error('❌ Parse error:', e.message);
         }
     }
 
-    // Hàm lấy phiên gần nhất từ bàn TX
     getLatestTxSession() {
         if (!this.latestTxData || !this.latestTxData.htr || this.latestTxData.htr.length === 0) {
             return {
@@ -291,12 +213,10 @@ class GameWebSocketClient {
         }
 
         try {
-            // Lấy phiên gần nhất (sid cao nhất)
             const latestSession = this.latestTxData.htr.reduce((prev, current) => {
                 return (current.sid > prev.sid) ? current : prev;
             });
 
-            // Tính tổng và xác định kết quả
             const tong = latestSession.d1 + latestSession.d2 + latestSession.d3;
             const ket_qua = (tong >= 11 && tong <= 18) ? "tài" : "xỉu";
 
@@ -319,7 +239,6 @@ class GameWebSocketClient {
         }
     }
 
-    // Hàm lấy phiên gần nhất từ bàn MD5
     getLatestMd5Session() {
         if (!this.latestMd5Data || !this.latestMd5Data.htr || this.latestMd5Data.htr.length === 0) {
             return {
@@ -329,12 +248,10 @@ class GameWebSocketClient {
         }
 
         try {
-            // Lấy phiên gần nhất (sid cao nhất)
             const latestSession = this.latestMd5Data.htr.reduce((prev, current) => {
                 return (current.sid > prev.sid) ? current : prev;
             });
 
-            // Tính tổng và xác định kết quả
             const tong = latestSession.d1 + latestSession.d2 + latestSession.d3;
             const ket_qua = (tong >= 11 && tong <= 18) ? "tài" : "xỉu";
 
@@ -361,15 +278,18 @@ class GameWebSocketClient {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             const delay = this.reconnectDelay * this.reconnectAttempts;
-            
+
             console.log(`🔄 Attempting to reconnect in ${delay}ms (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-            
+
             setTimeout(() => {
                 console.log('🔄 Reconnecting...');
                 this.connect();
             }, delay);
         } else {
-            console.log('❌ Max reconnection attempts reached');
+            console.log('❌ Max reconnection attempts reached, resetting...');
+            // Reset để tiếp tục thử lại sau 60s
+            this.reconnectAttempts = 0;
+            setTimeout(() => this.connect(), 60000);
         }
     }
 
@@ -384,96 +304,71 @@ class GameWebSocketClient {
     }
 
     close() {
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
         if (this.ws) {
             this.ws.close();
         }
     }
 }
 
-// KHỞI TẠO EXPRESS SERVER
+// ================== EXPRESS SERVER ==================
 const app = express();
-const PORT = 3012;
+const PORT = process.env.PORT || 3012;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Tạo WebSocket client - URL MỚI
+// ✅ Route health check cho Render (phải trả 200 ngay lập tức)
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
+// Tạo WebSocket client
 const client = new GameWebSocketClient(
     'wss://apisao.net/websocket?d=YUdkaWIySnF8MjF8MTc2NjQ3MzgwNjA1OXwyOTkyZDYyNTY3N2NjMjU5ZTFmNWU0NjMzYmU5ZDY3ZXxkYmZhNjZmYTg2ZDdhMGZiODEzNGE2YWQ4YjE3ODllOA=='
 );
 
-// Kết nối WebSocket
 client.connect();
 
-// Route để lấy phiên gần nhất từ bàn TX
+// Routes
 app.get('/api/tx', (req, res) => {
     try {
         const latestSession = client.getLatestTxSession();
-        
-        if (latestSession.error) {
-            return res.status(404).json(latestSession);
-        }
-        
+        if (latestSession.error) return res.status(404).json(latestSession);
         res.json(latestSession);
     } catch (error) {
-        res.status(500).json({
-            error: "Lỗi server",
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
+        res.status(500).json({ error: "Lỗi server", message: error.message });
     }
 });
 
-// Route để lấy phiên gần nhất từ bàn MD5
 app.get('/api/md5', (req, res) => {
     try {
         const latestSession = client.getLatestMd5Session();
-        
-        if (latestSession.error) {
-            return res.status(404).json(latestSession);
-        }
-        
+        if (latestSession.error) return res.status(404).json(latestSession);
         res.json(latestSession);
     } catch (error) {
-        res.status(500).json({
-            error: "Lỗi server",
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
+        res.status(500).json({ error: "Lỗi server", message: error.message });
     }
 });
 
-// Route để lấy cả 2 bàn
 app.get('/api/all', (req, res) => {
     try {
         const txSession = client.getLatestTxSession();
         const md5Session = client.getLatestMd5Session();
-        
         res.json({
             tai_xiu: txSession.error ? { error: txSession.error } : txSession,
             md5: md5Session.error ? { error: md5Session.error } : md5Session,
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        res.status(500).json({
-            error: "Lỗi server",
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
+        res.status(500).json({ error: "Lỗi server", message: error.message });
     }
 });
 
-// Route kiểm tra trạng thái
 app.get('/api/status', (req, res) => {
-    const hasTxData = client.latestTxData && 
-                     client.latestTxData.htr && 
-                     client.latestTxData.htr.length > 0;
-    
-    const hasMd5Data = client.latestMd5Data && 
-                      client.latestMd5Data.htr && 
-                      client.latestMd5Data.htr.length > 0;
-    
+    const hasTxData = client.latestTxData && client.latestTxData.htr && client.latestTxData.htr.length > 0;
+    const hasMd5Data = client.latestMd5Data && client.latestMd5Data.htr && client.latestMd5Data.htr.length > 0;
+
     res.json({
         status: "running",
         websocket_connected: client.ws ? client.ws.readyState === WebSocket.OPEN : false,
@@ -482,36 +377,23 @@ app.get('/api/status', (req, res) => {
         has_md5_data: hasMd5Data,
         tx_data_count: hasTxData ? client.latestTxData.htr.length : 0,
         md5_data_count: hasMd5Data ? client.latestMd5Data.htr.length : 0,
-        tx_latest_sid: hasTxData ? 
-            client.latestTxData.htr.reduce((p, c) => c.sid > p.sid ? c : p).sid : 
-            null,
-        md5_latest_sid: hasMd5Data ? 
-            client.latestMd5Data.htr.reduce((p, c) => c.sid > p.sid ? c : p).sid : 
-            null,
+        tx_latest_sid: hasTxData ? client.latestTxData.htr.reduce((p, c) => c.sid > p.sid ? c : p).sid : null,
+        md5_latest_sid: hasMd5Data ? client.latestMd5Data.htr.reduce((p, c) => c.sid > p.sid ? c : p).sid : null,
         tx_last_updated: client.lastUpdateTime.tx ? client.lastUpdateTime.tx.toISOString() : null,
         md5_last_updated: client.lastUpdateTime.md5 ? client.lastUpdateTime.md5.toISOString() : null,
         timestamp: new Date().toISOString()
     });
 });
 
-// Route refresh dữ liệu
 app.get('/api/refresh', (req, res) => {
     if (client.isAuthenticated && client.ws && client.ws.readyState === WebSocket.OPEN) {
         client.refreshGameData();
-        
-        res.json({
-            message: "Đã gửi yêu cầu refresh dữ liệu cả 2 bàn",
-            timestamp: new Date().toISOString()
-        });
+        res.json({ message: "Đã gửi yêu cầu refresh dữ liệu cả 2 bàn", timestamp: new Date().toISOString() });
     } else {
-        res.status(400).json({
-            error: "Không thể refresh",
-            message: "WebSocket chưa kết nối hoặc chưa xác thực"
-        });
+        res.status(400).json({ error: "Không thể refresh", message: "WebSocket chưa kết nối hoặc chưa xác thực" });
     }
 });
 
-// Route trang chủ
 app.get('/', (req, res) => {
     res.send(`
         <html>
@@ -538,179 +420,103 @@ app.get('/', (req, res) => {
             <body>
                 <div class="container">
                     <h1>🎲 Sảnh Tài Xỉu - API</h1>
-                    
-                    <div id="status" class="endpoint">
-                        <h2>📡 Đang kiểm tra trạng thái...</h2>
-                    </div>
-                    
+                    <div id="status" class="endpoint"><h2>📡 Đang kiểm tra trạng thái...</h2></div>
                     <div class="endpoint">
                         <h2>📊 API Endpoints:</h2>
                         <ul>
-                            <li><code>GET <a class="api-link" href="/api/tx" target="_blank">/api/tx</a></code> - Bàn Tài Xỉu thường</li>
-                            <li><code>GET <a class="api-link" href="/api/md5" target="_blank">/api/md5</a></code> - Bàn MD5</li>
-                            <li><code>GET <a class="api-link" href="/api/all" target="_blank">/api/all</a></code> - Cả 2 bàn</li>
-                            <li><code>GET <a class="api-link" href="/api/status" target="_blank">/api/status</a></code> - Trạng thái</li>
-                            <li><code>GET <a class="api-link" href="/api/refresh" target="_blank">/api/refresh</a></code> - Refresh dữ liệu</li>
+                            <li><code>GET <a class="api-link" href="/api/tx">/api/tx</a></code></li>
+                            <li><code>GET <a class="api-link" href="/api/md5">/api/md5</a></code></li>
+                            <li><code>GET <a class="api-link" href="/api/all">/api/all</a></code></li>
+                            <li><code>GET <a class="api-link" href="/api/status">/api/status</a></code></li>
+                            <li><code>GET <a class="api-link" href="/api/refresh">/api/refresh</a></code></li>
+                            <li><code>GET <a class="api-link" href="/health">/health</a></code></li>
                         </ul>
                     </div>
-                    
-                    <div class="endpoint">
-                        <h2>🎯 Quick Actions:</h2>
-                        <button class="btn" onclick="getTX()">🎲 Lấy Bàn TX</button>
-                        <button class="btn" onclick="getMD5()">🔐 Lấy Bàn MD5</button>
-                        <button class="btn" onclick="getAll()">📊 Lấy Cả 2</button>
-                        <button class="btn" onclick="refreshData()">🔄 Refresh Data</button>
-                    </div>
-                    
-                    <div class="endpoint">
-                        <h2>🔗 Quick Links:</h2>
-                        <p><strong>Localhost:</strong> <a class="api-link" href="http://localhost:${PORT}/api/tx" target="_blank">http://localhost:${PORT}/api/tx</a></p>
-                        <p><strong>Network:</strong> http://[YOUR_IP]:${PORT}/api/tx</p>
-                    </div>
-                    
                     <div id="data-display" class="endpoint">
                         <h2>📋 Data Display:</h2>
                         <div id="tx-data"></div>
                         <div id="md5-data"></div>
                     </div>
                 </div>
-                
                 <script>
-                    // Kiểm tra trạng thái và cập nhật liên tục
                     function updateStatus() {
-                        fetch('/api/status')
-                            .then(response => response.json())
-                            .then(data => {
-                                const statusDiv = document.getElementById('status');
-                                const isConnected = data.websocket_connected;
-                                const hasTxData = data.has_tx_data;
-                                const hasMd5Data = data.has_md5_data;
-                                
-                                statusDiv.innerHTML = \`
-                                    <h2>📡 Trạng thái hệ thống:</h2>
-                                    <div class="status \${isConnected ? 'connected' : 'disconnected'}">
-                                        <p><strong>WebSocket:</strong> \${isConnected ? '✅ Đã kết nối' : '❌ Mất kết nối'}</p>
-                                        <p><strong>Xác thực:</strong> \${data.authenticated ? '✅ Đã xác thực' : '⏳ Chưa xác thực'}</p>
-                                        <div class="board board-tx">
-                                            <p><strong>Bàn TX:</strong> \${hasTxData ? '✅ Có dữ liệu (' + data.tx_data_count + ' phiên)' : '⏳ Đang chờ'}</p>
-                                            \${data.tx_latest_sid ? '<p>Phiên mới nhất: ' + data.tx_latest_sid + '</p>' : ''}
-                                            \${data.tx_last_updated ? '<p>Cập nhật: ' + new Date(data.tx_last_updated).toLocaleTimeString() + '</p>' : ''}
-                                        </div>
-                                        <div class="board board-md5">
-                                            <p><strong>Bàn MD5:</strong> \${hasMd5Data ? '✅ Có dữ liệu (' + data.md5_data_count + ' phiên)' : '⏳ Đang chờ'}</p>
-                                            \${data.md5_latest_sid ? '<p>Phiên mới nhất: ' + data.md5_latest_sid + '</p>' : ''}
-                                            \${data.md5_last_updated ? '<p>Cập nhật: ' + new Date(data.md5_last_updated).toLocaleTimeString() + '</p>' : ''}
-                                        </div>
+                        fetch('/api/status').then(r => r.json()).then(data => {
+                            const isConnected = data.websocket_connected;
+                            const hasTxData = data.has_tx_data;
+                            const hasMd5Data = data.has_md5_data;
+                            document.getElementById('status').innerHTML = \`
+                                <h2>📡 Trạng thái hệ thống:</h2>
+                                <div class="status \${isConnected ? 'connected' : 'disconnected'}">
+                                    <p><strong>WebSocket:</strong> \${isConnected ? '✅ Đã kết nối' : '❌ Mất kết nối'}</p>
+                                    <p><strong>Xác thực:</strong> \${data.authenticated ? '✅ Đã xác thực' : '⏳ Chưa xác thực'}</p>
+                                    <div class="board board-tx">
+                                        <p><strong>Bàn TX:</strong> \${hasTxData ? '✅ ' + data.tx_data_count + ' phiên' : '⏳ Đang chờ'}</p>
                                     </div>
-                                \`;
-                                
-                                // Tự động lấy dữ liệu nếu có
-                                if (hasTxData) getTX();
-                                if (hasMd5Data) getMD5();
-                            })
-                            .catch(error => {
-                                console.error('Error:', error);
-                            });
+                                    <div class="board board-md5">
+                                        <p><strong>Bàn MD5:</strong> \${hasMd5Data ? '✅ ' + data.md5_data_count + ' phiên' : '⏳ Đang chờ'}</p>
+                                    </div>
+                                </div>\`;
+                            if (hasTxData) getTX();
+                            if (hasMd5Data) getMD5();
+                        }).catch(() => {});
                     }
-                    
                     function getTX() {
-                        fetch('/api/tx')
-                            .then(response => response.json())
-                            .then(data => {
-                                if (data.error) {
-                                    document.getElementById('tx-data').innerHTML = \`
-                                        <div class="board board-tx">
-                                            <h3>🎲 Bàn Tài Xỉu</h3>
-                                            <p>❌ \${data.error}</p>
-                                        </div>
-                                    \`;
-                                } else {
-                                    document.getElementById('tx-data').innerHTML = \`
-                                        <div class="board board-tx">
-                                            <h3>🎲 Bàn Tài Xỉu</h3>
-                                            <p><strong>Phiên:</strong> \${data.phien}</p>
-                                            <p><strong>Xúc xắc:</strong> \${data.xuc_xac_1}, \${data.xuc_xac_2}, \${data.xuc_xac_3}</p>
-                                            <p><strong>Tổng:</strong> \${data.tong} (<span style="color: \${data.ket_qua === 'tài' ? 'red' : 'blue'}">\${data.ket_qua}</span>)</p>
-                                            <p><strong>Thời gian:</strong> \${new Date(data.timestamp).toLocaleTimeString()}</p>
-                                        </div>
-                                    \`;
-                                }
-                            });
+                        fetch('/api/tx').then(r => r.json()).then(data => {
+                            if (data.error) return;
+                            document.getElementById('tx-data').innerHTML = \`
+                                <div class="board board-tx">
+                                    <h3>🎲 Bàn Tài Xỉu</h3>
+                                    <p><strong>Phiên:</strong> \${data.phien}</p>
+                                    <p><strong>Xúc xắc:</strong> \${data.xuc_xac_1}, \${data.xuc_xac_2}, \${data.xuc_xac_3}</p>
+                                    <p><strong>Tổng:</strong> \${data.tong} (<span style="color:\${data.ket_qua==='tài'?'red':'blue'}">\${data.ket_qua}</span>)</p>
+                                </div>\`;
+                        });
                     }
-                    
                     function getMD5() {
-                        fetch('/api/md5')
-                            .then(response => response.json())
-                            .then(data => {
-                                if (data.error) {
-                                    document.getElementById('md5-data').innerHTML = \`
-                                        <div class="board board-md5">
-                                            <h3>🔐 Bàn MD5</h3>
-                                            <p>❌ \${data.error}</p>
-                                        </div>
-                                    \`;
-                                } else {
-                                    document.getElementById('md5-data').innerHTML = \`
-                                        <div class="board board-md5">
-                                            <h3>🔐 Bàn MD5</h3>
-                                            <p><strong>Phiên:</strong> \${data.phien}</p>
-                                            <p><strong>Xúc xắc:</strong> \${data.xuc_xac_1}, \${data.xuc_xac_2}, \${data.xuc_xac_3}</p>
-                                            <p><strong>Tổng:</strong> \${data.tong} (<span style="color: \${data.ket_qua === 'tài' ? 'red' : 'blue'}">\${data.ket_qua}</span>)</p>
-                                            <p><strong>Thời gian:</strong> \${new Date(data.timestamp).toLocaleTimeString()}</p>
-                                        </div>
-                                    \`;
-                                }
-                            });
+                        fetch('/api/md5').then(r => r.json()).then(data => {
+                            if (data.error) return;
+                            document.getElementById('md5-data').innerHTML = \`
+                                <div class="board board-md5">
+                                    <h3>🔐 Bàn MD5</h3>
+                                    <p><strong>Phiên:</strong> \${data.phien}</p>
+                                    <p><strong>Xúc xắc:</strong> \${data.xuc_xac_1}, \${data.xuc_xac_2}, \${data.xuc_xac_3}</p>
+                                    <p><strong>Tổng:</strong> \${data.tong} (<span style="color:\${data.ket_qua==='tài'?'red':'blue'}">\${data.ket_qua}</span>)</p>
+                                </div>\`;
+                        });
                     }
-                    
-                    function getAll() {
-                        getTX();
-                        getMD5();
-                    }
-                    
-                    function refreshData() {
-                        fetch('/api/refresh')
-                            .then(response => response.json())
-                            .then(data => {
-                                alert(data.message);
-                                setTimeout(updateStatus, 2000);
-                            });
-                    }
-                    
-                    // Cập nhật mỗi 5 giây
                     updateStatus();
                     setInterval(updateStatus, 5000);
-                    
-                    // Tự động lấy dữ liệu ban đầu
-                    setTimeout(() => {
-                        getTX();
-                        getMD5();
-                    }, 3000);
                 </script>
             </body>
         </html>
     `);
 });
 
-// Khởi động server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server đang chạy tại: http://localhost:${PORT}`);
-    console.log(`🎲 API Bàn TX: http://localhost:${PORT}/api/tx`);
-    console.log(`🔐 API Bàn MD5: http://localhost:${PORT}/api/md5`);
-    console.log(`📊 API Cả 2 bàn: http://localhost:${PORT}/api/all`);
-    console.log(`📡 Status: http://localhost:${PORT}/api/status`);
-    console.log(`🌐 Truy cập từ mạng nội bộ: http://[YOUR_IP]:${PORT}`);
+// ✅ Bắt đầu lắng nghe với host 0.0.0.0 để Render truy cập được
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server đang chạy tại: http://0.0.0.0:${PORT}`);
+    console.log(`🌐 Render URL: https://<your-app>.onrender.com`);
 });
 
-// Bắt đầu heartbeat sau khi kết nối
+// Xử lý lỗi không bắt được để app không bị crash
+process.on('uncaughtException', (err) => {
+    console.error('❌ Uncaught Exception:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled Rejection:', reason);
+});
+
+// Heartbeat sau khi kết nối
 setTimeout(() => {
     client.startHeartbeat();
 }, 10000);
 
-// Xử lý tắt chương trình
+// Tắt chương trình sạch
 process.on('SIGINT', () => {
-    console.log('\n👋 Closing WebSocket connection and server...');
+    console.log('\n👋 Closing...');
     client.close();
+    server.close();
     process.exit();
 });
 
